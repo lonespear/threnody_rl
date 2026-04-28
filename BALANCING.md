@@ -50,22 +50,40 @@ enemy faction) with win/loss/draw counts. Diagonal = mirror match.
 
 ## Workflow: testing a stat change
 
-Suppose you suspect Harrow's Render is over-statted. To test:
+Use `tune.py`. It runs a baseline 5×5 matrix, applies your stat overrides
+in-memory, runs the same matrix again, and prints the per-matchup delta.
+No file edits, no retraining.
 
-1. **Lower its ballistic skill in the Python env** (`threnody_rl/env/factions.py`).
-   Change `ballistic_skill=4` to `ballistic_skill=5` for the Render entry.
-2. **Run eval against an existing checkpoint** trained on the unmodified
-   stats. The opponent's policy hasn't been updated, so this measures how
-   much the stat change shifts win rates *without* needing a full retrain.
-3. **Compare** the new matchup matrix against a baseline matrix you saved
-   earlier (use `--out matrix_after.json` then diff).
+```bash
+python -m threnody_rl.tune \
+  --checkpoint checkpoints/threnody_step_4000000_final.pt \
+  --override harrow.render.ballistic_skill=4 \
+  --override accord.line_trooper.ranged.attacks=2 \
+  --games-per-matchup 30 \
+  --out runs/render_nerf.json
+```
 
-For more rigorous results, retrain after the stat change so both sides
-adapt — but the quick eval is usually enough to flag obvious imbalances.
+Override syntax: `<faction>.<unit_slug>.<field>=<value>`, repeated as
+many times as needed. Slug = unit's display name lowercased with spaces
+replaced by underscores ("Line Trooper" → `line_trooper`, "Render" →
+`render`). Field paths support nested weapons (`ranged.attacks`,
+`melee.damage`, etc.) and top-level Unit attributes (`movement`,
+`toughness`, `weapon_skill`, `ballistic_skill`, `wounds`, `save`,
+`nullfield_save`, `objective_control`, `advance_bonus`).
 
-(A `tune.py` script that automates this stat-tweak → eval → delta-report
-loop is on the wishlist; see `threnody/docs/MULTIPLAYER_PHASE1_PLAN.md`'s
-Phase 1.x follow-ups. For now the workflow is manual.)
+**Why this works without retraining.** Both sides use the same fixed
+policy, so the policy-vs-policy strategic equilibrium doesn't shift —
+the only thing that changes is the stat block. The win-rate delta
+isolates the *mechanical* effect of the stat change. For a deeper test
+where the policy adapts to the new stats, retrain afterward — but most
+"is X over-statted?" questions answer cleanly with the quick eval.
+
+Output:
+- Baseline 5×5 matrix (rows = player faction, cols = enemy faction)
+- Modified 5×5 matrix
+- Delta table (positive = override helped player faction)
+- Per-faction average win rate before/after across all 5 matchups
+- Optional JSON dump (`--out path/to/file.json`) for later comparison
 
 ## Hardware notes
 
