@@ -1,0 +1,14 @@
+# Threnody RL — pinned dependencies for reproducible training and balance audits.
+# Install with: pip install -r requirements.txt
+#
+# Tested on Python 3.11 / Windows + WSL2. PyTorch wheel selection depends on
+# whether you want CPU-only or CUDA — see https://pytorch.org/get-started for
+# the right index URL on your platform. The pin below assumes CPU; for GPU
+# replace with the matching torch+cu*** wheel.
+
+numpy>=1.26,<2.2
+torch>=2.2,<2.6
+flask>=3.0,<4.0
+
+# Optional but recommended for the dashboard's live charts:
+matplotlib>=3.7,<4.0
