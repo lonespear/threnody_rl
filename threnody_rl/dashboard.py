@@ -25,7 +25,24 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template_string
 
 
-LOG_LINE_RE = re.compile(
+# Two formats supported. NEW format (post draw-fix) carries wr/lr/dr/dec
+# separately; OLD format only had wr_live. Try NEW first, fall back to OLD.
+LOG_LINE_RE_NEW = re.compile(
+    r"\[step\s+(?P<step>\d+)\]\s+"
+    r"wr=(?P<wr>[-\d\.nan]+)\s+"
+    r"lr=(?P<lr>[-\d\.nan]+)\s+"
+    r"dr=(?P<dr>[-\d\.nan]+)\s+"
+    r"dec=(?P<dec>[-\d\.nan]+)\s+"
+    r"ep_len=(?P<ep>[-\d\.nan]+)\s+"
+    r"pol_loss=(?P<pol>[+\-\d\.]+)\s+"
+    r"val_loss=(?P<val>[-\d\.]+)\s+"
+    r"ent=(?P<ent>[-\d\.]+)\s+"
+    r"kl=(?P<kl>[+\-\d\.]+)\s+"
+    r"clip_frac=(?P<clip>[-\d\.]+)\s+"
+    r"fps=(?P<fps>[-\d\.]+)"
+)
+
+LOG_LINE_RE_OLD = re.compile(
     r"\[step\s+(?P<step>\d+)\]\s+"
     r"wr_live=(?P<wr>[-\d\.nan]+)\s+"
     r"ep_len=(?P<ep>[-\d\.nan]+)\s+"
@@ -42,6 +59,9 @@ LOG_LINE_RE = re.compile(
 class Point:
     step: int
     wr: float
+    lr: float       # loss rate (NaN for old-format lines)
+    dr: float       # draw rate (NaN for old-format lines)
+    dec: float      # decisive rate = wr + lr (NaN for old-format lines)
     ep_len: float
     pol: float
     val: float
@@ -55,25 +75,37 @@ def parse_log(path: Path) -> list[Point]:
     if not path.exists():
         return []
     out: list[Point] = []
+    nan = float("nan")
     with path.open("r", encoding="utf-8", errors="ignore") as fh:
         for line in fh:
-            m = LOG_LINE_RE.search(line)
-            if not m:
+            m = LOG_LINE_RE_NEW.search(line)
+            if m:
+                try:
+                    out.append(Point(
+                        step=int(m["step"]),
+                        wr=float(m["wr"]), lr=float(m["lr"]),
+                        dr=float(m["dr"]), dec=float(m["dec"]),
+                        ep_len=float(m["ep"]),
+                        pol=float(m["pol"]), val=float(m["val"]),
+                        ent=float(m["ent"]), kl=float(m["kl"]),
+                        clip=float(m["clip"]), fps=float(m["fps"]),
+                    ))
+                except ValueError:
+                    pass
                 continue
-            try:
-                out.append(Point(
-                    step=int(m["step"]),
-                    wr=float(m["wr"]),
-                    ep_len=float(m["ep"]),
-                    pol=float(m["pol"]),
-                    val=float(m["val"]),
-                    ent=float(m["ent"]),
-                    kl=float(m["kl"]),
-                    clip=float(m["clip"]),
-                    fps=float(m["fps"]),
-                ))
-            except ValueError:
-                continue
+            m = LOG_LINE_RE_OLD.search(line)
+            if m:
+                try:
+                    out.append(Point(
+                        step=int(m["step"]),
+                        wr=float(m["wr"]), lr=nan, dr=nan, dec=nan,
+                        ep_len=float(m["ep"]),
+                        pol=float(m["pol"]), val=float(m["val"]),
+                        ent=float(m["ent"]), kl=float(m["kl"]),
+                        clip=float(m["clip"]), fps=float(m["fps"]),
+                    ))
+                except ValueError:
+                    pass
     return out
 
 
@@ -89,7 +121,7 @@ INDEX_HTML = """
   h1 { margin-top: 0; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .card { background: #1b1b24; padding: 12px; border-radius: 8px; }
-  .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .summary { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 20px; }
   .stat { background: #1b1b24; padding: 12px; border-radius: 6px; }
   .stat .label { color: #888; font-size: 12px; text-transform: uppercase; }
   .stat .value { font-size: 22px; margin-top: 4px; }
@@ -100,12 +132,13 @@ INDEX_HTML = """
 <h1>Threnody RL — live</h1>
 <div class="summary" id="summary"></div>
 <div class="grid">
-  <div class="card"><canvas id="wr"></canvas></div>
+  <div class="card" style="grid-column: 1 / -1"><canvas id="outcomes"></canvas></div>
   <div class="card"><canvas id="ent"></canvas></div>
+  <div class="card"><canvas id="ep"></canvas></div>
   <div class="card"><canvas id="pol"></canvas></div>
   <div class="card"><canvas id="val"></canvas></div>
   <div class="card"><canvas id="kl"></canvas></div>
-  <div class="card"><canvas id="ep"></canvas></div>
+  <div class="card"><canvas id="fps"></canvas></div>
 </div>
 <script>
 const charts = {};
@@ -125,29 +158,75 @@ function mkChart(id, label, color) {
     }
   });
 }
-mkChart('wr',  'live win%', '#4af');
-mkChart('ent', 'entropy',   '#fa4');
+
+// Outcomes chart — multi-series (win / loss / draw / decisive). The
+// canary you watch overnight: dec should rise, dr should fall.
+function mkOutcomes() {
+  const el = document.getElementById('outcomes').getContext('2d');
+  const series = [
+    { label: 'win',      color: '#4af' },
+    { label: 'loss',     color: '#f55' },
+    { label: 'draw',     color: '#ff4' },
+    { label: 'decisive', color: '#4f4' },
+  ];
+  charts['outcomes'] = new Chart(el, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: series.map(s => ({
+        label: s.label, data: [], borderColor: s.color, tension: 0.2,
+        pointRadius: 0, borderWidth: 1.5, backgroundColor: 'transparent', fill: false,
+      })),
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { labels: { color: '#bbb' } }, title: { display: true, text: 'Outcomes (rolling)', color: '#ddd' } },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { color: '#333' } },
+        y: { min: 0, max: 1, ticks: { color: '#888' }, grid: { color: '#333' } }
+      }
+    }
+  });
+}
+mkOutcomes();
+mkChart('ent', 'entropy',     '#fa4');
+mkChart('ep',  'episode len', '#ff4');
 mkChart('pol', 'policy loss', '#f44');
 mkChart('val', 'value loss',  '#4f4');
 mkChart('kl',  'approx KL',   '#f4f');
-mkChart('ep',  'episode len', '#ff4');
+mkChart('fps', 'fps',         '#aaa');
 
 async function refresh() {
   const r = await fetch('/data');
   const pts = await r.json();
   if (!pts.length) return;
   const steps = pts.map(p => p.step);
-  const fields = { wr: 'wr', ent: 'ent', pol: 'pol', val: 'val', kl: 'kl', ep: 'ep_len' };
+
+  // Multi-series outcomes chart
+  const oc = charts['outcomes'];
+  oc.data.labels = steps;
+  oc.data.datasets[0].data = pts.map(p => p.wr);
+  oc.data.datasets[1].data = pts.map(p => p.lr);
+  oc.data.datasets[2].data = pts.map(p => p.dr);
+  oc.data.datasets[3].data = pts.map(p => p.dec);
+  oc.update();
+
+  // Single-series charts
+  const fields = { ent: 'ent', ep: 'ep_len', pol: 'pol', val: 'val', kl: 'kl', fps: 'fps' };
   for (const [cid, k] of Object.entries(fields)) {
     const c = charts[cid];
     c.data.labels = steps;
     c.data.datasets[0].data = pts.map(p => p[k]);
     c.update();
   }
+
   const latest = pts[pts.length - 1];
+  const fmtPct = v => Number.isFinite(v) ? (v * 100).toFixed(1) + '%' : '—';
   document.getElementById('summary').innerHTML = `
     <div class="stat"><div class="label">step</div><div class="value">${latest.step.toLocaleString()}</div></div>
-    <div class="stat"><div class="label">win% (live)</div><div class="value">${(latest.wr*100).toFixed(1)}%</div></div>
+    <div class="stat"><div class="label">win</div><div class="value">${fmtPct(latest.wr)}</div></div>
+    <div class="stat"><div class="label">draw</div><div class="value">${fmtPct(latest.dr)}</div></div>
+    <div class="stat"><div class="label">decisive</div><div class="value">${fmtPct(latest.dec)}</div></div>
     <div class="stat"><div class="label">entropy</div><div class="value">${latest.ent.toFixed(3)}</div></div>
     <div class="stat"><div class="label">fps</div><div class="value">${latest.fps.toFixed(0)}</div></div>`;
 }
