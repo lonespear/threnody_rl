@@ -70,6 +70,14 @@ class PPOConfig:
     device:          str = "cuda" if torch.cuda.is_available() else "cpu"
     checkpoint_dir:  str = "checkpoints"
     log_dir:         str = "logs"
+    # Reward / mode tuning. None = inherit RewardConfig default; concrete
+    # value = override at env construction. See main() argparse for help text.
+    mode:            str = "DEATHMATCH"
+    win:             float | None = None
+    loss:            float | None = None
+    draw_penalty:    float | None = None
+    dmg_dealt:       float | None = None
+    vp_gained:       float | None = None
 
 
 # ─── Rollout buffer ──────────────────────────────────────────────────────────
@@ -501,6 +509,12 @@ def main():
         device=args.device or ("cuda" if torch.cuda.is_available() else "cpu"),
         checkpoint_dir=args.checkpoint_dir,
         log_dir=args.log_dir,
+        mode=args.mode,
+        win=args.win,
+        loss=args.loss,
+        draw_penalty=args.draw_penalty,
+        dmg_dealt=args.dmg_dealt,
+        vp_gained=args.vp_gained,
     )
     train(cfg, resume=args.resume)
 
