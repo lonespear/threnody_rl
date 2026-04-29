@@ -5,11 +5,12 @@ __pycache__/
 *.so
 .Python
 
-# Virtual environments
-.venv/
-venv/
-env/
-ENV/
+# Virtual environments — leading slash anchors to repo root so we don't
+# accidentally exclude `threnody_rl/env/` (the game-engine package).
+/.venv/
+/venv/
+/env/
+/ENV/
 
 # Test / coverage
 .pytest_cache/

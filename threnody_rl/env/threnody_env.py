@@ -26,7 +26,7 @@ Reward (active team, per step):
   - 2.00 * own units killed this step
   + 0.50 * VP gained this step  (Objectives mode)
   - 0.50 * VP conceded this step
-  Terminal: ±10 on win/loss (+0 on draw), applied to the side whose step
+  Terminal: ±10 on win/loss, -2 on draw (both teams), applied to the side whose step
   caused game_over; the opposing side's next observation receives the
   mirrored terminal reward through the "opponent last delta" accumulator.
 """
@@ -153,6 +153,14 @@ class RewardConfig:
     vp_conceded: float = 0.50
     win: float = 10.0
     loss: float = 10.0
+    # Draw penalty — applied as -draw_penalty to BOTH teams when the
+    # episode terminates with no winner (state.winner == -1). Fixes the
+    # Archon-style "draw is a zero attractor" failure mode where a policy
+    # that's losing more than 50% prefers stalling (EV=0) over playing
+    # for the win (EV<0). Magnitude chosen so that drawing is clearly
+    # worse than a 30%-win shot:  -3 < 0.3·10 + 0.7·(-10) = -4 ✗
+    # Using -2 instead so a policy at ≥30% win prob still chases the win.
+    draw_penalty: float = 2.0
 
 
 # ─── Env ─────────────────────────────────────────────────────────────────────
@@ -820,6 +828,10 @@ class ThrenodyEnv:
                 r += cfg.win
             elif self.state.winner == 1 - team:
                 r -= cfg.loss
+            else:
+                # Draw — both teams penalised equally. Prevents the
+                # zero-attractor where policies converge to stalling.
+                r -= cfg.draw_penalty
             snap["terminal_applied"] = True
 
         snap["dmg_dealt"] = self._cum_dmg_dealt[team]

@@ -346,6 +346,8 @@ def train(cfg: PPOConfig, resume: str | None = None) -> None:
 
     last_obs_state = None
     rolling_winrate = deque(maxlen=200)
+    rolling_lossrate = deque(maxlen=200)
+    rolling_drawrate = deque(maxlen=200)
     rolling_eplen   = deque(maxlen=200)
     last_log_step = start_step
     last_save_step = start_step
@@ -371,11 +373,12 @@ def train(cfg: PPOConfig, resume: str | None = None) -> None:
 
         losses = ppo_update(model, opt, buf, cfg)
 
-        # Track rolling win-rate of LIVE policy
+        # Track rolling win/loss/draw rate of LIVE policy
         n_eps = ep_stats.live_team_won + ep_stats.live_team_lost + ep_stats.draws
         if n_eps > 0:
-            wr = ep_stats.live_team_won / n_eps
-            rolling_winrate.append(wr)
+            rolling_winrate.append(ep_stats.live_team_won  / n_eps)
+            rolling_lossrate.append(ep_stats.live_team_lost / n_eps)
+            rolling_drawrate.append(ep_stats.draws          / n_eps)
             rolling_eplen.append(buf.idx / max(1, n_eps))
 
         # League refresh
@@ -388,10 +391,18 @@ def train(cfg: PPOConfig, resume: str | None = None) -> None:
         if global_step - last_log_step >= cfg.log_interval:
             elapsed = time.time() - t0
             fps = (global_step - start_step) / max(1.0, elapsed)
-            wr_avg = (sum(rolling_winrate) / len(rolling_winrate)) if rolling_winrate else float("nan")
-            ep_len_avg = (sum(rolling_eplen) / len(rolling_eplen)) if rolling_eplen else float("nan")
+            def _avg(buf): return (sum(buf) / len(buf)) if buf else float("nan")
+            wr_avg = _avg(rolling_winrate)
+            lr_avg = _avg(rolling_lossrate)
+            dr_avg = _avg(rolling_drawrate)
+            ep_len_avg = _avg(rolling_eplen)
+            # decisive = wins + losses (anything but draws). Useful as the
+            # canary for the Archon-style "policy converges to drawing"
+            # failure mode — if dec_avg drifts down, raise draw_penalty.
+            dec_avg = (wr_avg + lr_avg) if not (math.isnan(wr_avg) or math.isnan(lr_avg)) else float("nan")
             print(
-                f"[step {global_step:>9d}] wr_live={wr_avg:.3f} ep_len={ep_len_avg:.1f} "
+                f"[step {global_step:>9d}] wr={wr_avg:.3f} lr={lr_avg:.3f} dr={dr_avg:.3f} dec={dec_avg:.3f} "
+                f"ep_len={ep_len_avg:.1f} "
                 f"pol_loss={losses['policy']:+.4f} val_loss={losses['value']:.4f} "
                 f"ent={losses['entropy']:.3f} kl={losses['kl']:+.4f} "
                 f"clip_frac={losses['clip_frac']:.3f} fps={fps:.0f} "
