@@ -151,16 +151,21 @@ class RewardConfig:
     own_killed: float = 2.0
     vp_gained: float = 0.50
     vp_conceded: float = 0.50
-    win: float = 10.0
-    loss: float = 10.0
+    # Terminal rewards bumped 5x from prior (win/loss = 10) so they
+    # dominate the per-step shaping (which accumulates to ~10-30 over a
+    # 50-step episode). The 2026-04-28 overnight run with win=10/loss=10/
+    # draw_penalty=2 plateaued at dec=0.45 — shaping rewards washed out
+    # the terminal signal entirely, both sides farmed each other to a tie.
+    win:  float = 50.0
+    loss: float = 50.0
     # Draw penalty — applied as -draw_penalty to BOTH teams when the
-    # episode terminates with no winner (state.winner == -1). Fixes the
-    # Archon-style "draw is a zero attractor" failure mode where a policy
-    # that's losing more than 50% prefers stalling (EV=0) over playing
-    # for the win (EV<0). Magnitude chosen so that drawing is clearly
-    # worse than a 30%-win shot:  -3 < 0.3·10 + 0.7·(-10) = -4 ✗
-    # Using -2 instead so a policy at ≥30% win prob still chases the win.
-    draw_penalty: float = 2.0
+    # episode terminates with no winner (state.winner == -1). Bumped to
+    # 20.0 so drawing is definitively worse than a 50/50 win-loss gamble:
+    #   conservative (10/10/80): 0.1·50 + 0.1·(-50) + 0.8·(-20) = -16
+    #   aggressive  (25/25/50):  0.25·50 + 0.25·(-50) + 0.5·(-20) = -10
+    #   decisive  (50/50/0):     0.5·50 + 0.5·(-50)                =   0
+    # Strong gradient signal pushing the policy out of the draw plateau.
+    draw_penalty: float = 20.0
 
 
 # ─── Env ─────────────────────────────────────────────────────────────────────

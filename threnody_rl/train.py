@@ -335,8 +335,24 @@ def train(cfg: PPOConfig, resume: str | None = None) -> None:
         start_step = int(ck.get("step", 0))
         print(f"[resume] loaded {resume} at step {start_step}", flush=True)
 
-    env = ThrenodyEnv(mode=GameMode.OBJECTIVES, with_terrain=True,
-                      with_objectives=True, max_steps=2000, seed=cfg.seed)
+    # Build reward config from CLI overrides (None = keep RewardConfig default).
+    from threnody_rl.env.threnody_env import RewardConfig
+    reward_cfg = RewardConfig()
+    if cfg.win          is not None: reward_cfg.win = cfg.win
+    if cfg.loss         is not None: reward_cfg.loss = cfg.loss
+    if cfg.draw_penalty is not None: reward_cfg.draw_penalty = cfg.draw_penalty
+    if cfg.dmg_dealt    is not None: reward_cfg.dmg_dealt = cfg.dmg_dealt; reward_cfg.dmg_taken = cfg.dmg_dealt
+    if cfg.vp_gained    is not None: reward_cfg.vp_gained = cfg.vp_gained; reward_cfg.vp_conceded = cfg.vp_gained
+    print(f"[reward] win={reward_cfg.win} loss={reward_cfg.loss} "
+          f"draw_penalty={reward_cfg.draw_penalty} dmg={reward_cfg.dmg_dealt} "
+          f"kill={reward_cfg.enemy_killed} vp={reward_cfg.vp_gained}", flush=True)
+    print(f"[mode] {cfg.mode}", flush=True)
+
+    mode = GameMode.DEATHMATCH if cfg.mode == "DEATHMATCH" else GameMode.OBJECTIVES
+    env = ThrenodyEnv(mode=mode, with_terrain=True,
+                      with_objectives=(cfg.mode == "OBJECTIVES"),
+                      max_steps=2000, seed=cfg.seed,
+                      reward_cfg=reward_cfg)
     buf = RolloutBuffer(cfg.rollout_steps, OBS_DIM, ACTION_SPACE_SIZE, device)
 
     # Initial frozen opponent: a copy of the live policy at start.
@@ -449,6 +465,22 @@ def main():
     ap.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     ap.add_argument("--log-dir", type=str, default="logs")
     ap.add_argument("--resume", type=str, default=None)
+    # Reward / mode tuning — escape the draw plateau without recompiling.
+    ap.add_argument("--mode", type=str, default="DEATHMATCH",
+                    choices=["DEATHMATCH", "OBJECTIVES"],
+                    help="Game mode for training episodes. DEATHMATCH ties "
+                         "are rarer than OBJECTIVES VP ties → faster decisive "
+                         "learning. Eval can still be run on either mode.")
+    ap.add_argument("--win",           type=float, default=None,
+                    help="Override RewardConfig.win (default 50.0)")
+    ap.add_argument("--loss",          type=float, default=None,
+                    help="Override RewardConfig.loss (default 50.0)")
+    ap.add_argument("--draw-penalty",  type=float, default=None,
+                    help="Override RewardConfig.draw_penalty (default 20.0)")
+    ap.add_argument("--dmg-dealt",     type=float, default=None,
+                    help="Override RewardConfig.dmg_dealt shaping coefficient")
+    ap.add_argument("--vp-gained",     type=float, default=None,
+                    help="Override RewardConfig.vp_gained shaping coefficient")
     args = ap.parse_args()
 
     cfg = PPOConfig(
