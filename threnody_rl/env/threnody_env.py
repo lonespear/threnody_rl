@@ -166,6 +166,14 @@ class RewardConfig:
     #   decisive  (50/50/0):     0.5·50 + 0.5·(-50)                =   0
     # Strong gradient signal pushing the policy out of the draw plateau.
     draw_penalty: float = 20.0
+    # Terminal KO bonus: ko_bonus * cum_kills, added at episode end on top
+    # of win/loss/draw. Default 0.0 preserves Run-2 behavior. The Run-2
+    # checkpoint exhibits stalemate-prone mirrors and runs the clock to
+    # MAX_TURNS, winning by alive-count tiebreak rather than by wiping.
+    # Setting ko_bonus > 0 rewards actually killing enemies and pushes the
+    # policy out of grinding equilibrium. Recommended retrain value: 5.0
+    # (≈ +15 reward for an average 3-kill game, +25 for a full wipe).
+    ko_bonus: float = 0.0
 
 
 # ─── Env ─────────────────────────────────────────────────────────────────────
@@ -837,6 +845,10 @@ class ThrenodyEnv:
                 # Draw — both teams penalised equally. Prevents the
                 # zero-attractor where policies converge to stalling.
                 r -= cfg.draw_penalty
+            # KO bonus: rewards actually killing enemies on top of the
+            # win/loss outcome. Pushes the policy toward wiping rather
+            # than alive-count tiebreak grinding.
+            r += cfg.ko_bonus * self._cum_kills[team]
             snap["terminal_applied"] = True
 
         snap["dmg_dealt"] = self._cum_dmg_dealt[team]

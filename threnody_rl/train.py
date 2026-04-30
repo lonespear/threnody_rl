@@ -78,6 +78,7 @@ class PPOConfig:
     draw_penalty:    float | None = None
     dmg_dealt:       float | None = None
     vp_gained:       float | None = None
+    ko_bonus:        float | None = None
 
 
 # ─── Rollout buffer ──────────────────────────────────────────────────────────
@@ -351,9 +352,11 @@ def train(cfg: PPOConfig, resume: str | None = None) -> None:
     if cfg.draw_penalty is not None: reward_cfg.draw_penalty = cfg.draw_penalty
     if cfg.dmg_dealt    is not None: reward_cfg.dmg_dealt = cfg.dmg_dealt; reward_cfg.dmg_taken = cfg.dmg_dealt
     if cfg.vp_gained    is not None: reward_cfg.vp_gained = cfg.vp_gained; reward_cfg.vp_conceded = cfg.vp_gained
+    if cfg.ko_bonus     is not None: reward_cfg.ko_bonus = cfg.ko_bonus
     print(f"[reward] win={reward_cfg.win} loss={reward_cfg.loss} "
           f"draw_penalty={reward_cfg.draw_penalty} dmg={reward_cfg.dmg_dealt} "
-          f"kill={reward_cfg.enemy_killed} vp={reward_cfg.vp_gained}", flush=True)
+          f"kill={reward_cfg.enemy_killed} vp={reward_cfg.vp_gained} "
+          f"ko_bonus={reward_cfg.ko_bonus}", flush=True)
     print(f"[mode] {cfg.mode}", flush=True)
 
     mode = GameMode.DEATHMATCH if cfg.mode == "DEATHMATCH" else GameMode.OBJECTIVES
@@ -489,6 +492,11 @@ def main():
                     help="Override RewardConfig.dmg_dealt shaping coefficient")
     ap.add_argument("--vp-gained",     type=float, default=None,
                     help="Override RewardConfig.vp_gained shaping coefficient")
+    ap.add_argument("--ko-bonus",      type=float, default=None,
+                    help="Terminal reward per enemy unit killed at episode end. "
+                         "Default 0.0 preserves Run-2 behavior; recommended 5.0 "
+                         "for stalemate-breaking retrain (rewards wiping over "
+                         "alive-count tiebreak grinding).")
     args = ap.parse_args()
 
     cfg = PPOConfig(
@@ -515,6 +523,7 @@ def main():
         draw_penalty=args.draw_penalty,
         dmg_dealt=args.dmg_dealt,
         vp_gained=args.vp_gained,
+        ko_bonus=args.ko_bonus,
     )
     train(cfg, resume=args.resume)
 
