@@ -77,6 +77,9 @@ def per_faction_summary(payload: dict, metric_fn, label: str):
 
 
 def analyze_one(path: Path):
+    if not path.exists():
+        print(f"\n[skip] {path} — file not found")
+        return
     payload = json.loads(path.read_text())
     overrides = payload.get("overrides", [])
     n = payload.get("games_per_matchup", "?")
