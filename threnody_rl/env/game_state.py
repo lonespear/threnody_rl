@@ -165,13 +165,15 @@ class GameState:
             self._start_team_turn()
             return f"team{self.active_team}: Maneuver Phase"
         else:
+            # Beacons score at the END of every round, including the last
+            # (parity with threnody src/core/GameState.js, 2026-10-15).
+            self._score_objectives(board)
             self.turn += 1
             if self.turn > MAX_TURNS:
                 self._resolve_game_end()
                 return f"Game over — winner {self.winner}"
             self.active_team = self.first_team
             self.phase = Phase.MANEUVER
-            self._score_objectives(board)
             self._start_team_turn()
             return f"Battle Round {self.turn} — team{self.active_team}: Maneuver Phase"
 
